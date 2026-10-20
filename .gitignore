@@ -1,0 +1,11 @@
+# Do not commit full Chromium checkouts or large build artifacts.
+chromium/
+src/
+out/
+depot_tools/
+*.apk
+*.aab
+*.log
+__pycache__/
+*.pyc
+.DS_Store
