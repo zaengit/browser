@@ -425,8 +425,9 @@ public final class InspectorActivity extends Activity {
                     writer.write(payload.length & 255);
                 } else {
                     writer.write(0x80 | 127);
+                    long length = payload.length;
                     for (int shift = 56; shift >= 0; shift -= 8)
-                        writer.write((payload.length >>> shift) & 255);
+                        writer.write((int) ((length >>> shift) & 255));
                 }
                 byte[] mask = new byte[4];
                 random.nextBytes(mask);
@@ -479,7 +480,7 @@ public final class InspectorActivity extends Activity {
                     }
                 }
             } catch (IOException error) {
-                setStatus("CDP disconnected: " + error.getMessage());
+                if (client == this) setStatus("CDP disconnected: " + error.getMessage());
             } finally { close(); }
         }
 
