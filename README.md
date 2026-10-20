@@ -2,7 +2,9 @@
 
 Source overlay for a **fork of Chromium Android**, targeting ARM64 Android phones. Not WebView, Eruda, or a re-packaged Google Chrome APK. Chromium's source and binary dependencies are downloaded from upstream on the Linux build host, **not committed to this repository**.
 
-> **Status: MVP source patch written, not yet compiled or tested on an Android phone.** No verified APK is available yet.
+> **Status: native DevTools overlay + pinned source + preflight scripts written, but no successful Chromium compilation or physical-phone test yet. No verified APK is available.**
+
+**Pinned Chromium baseline:** [`9657580a7997ca5f023f2c7551e291b91a06f021`](https://chromium.googlesource.com/chromium/src/+/9657580a7997ca5f023f2c7551e291b91a06f021) (recorded in [`UPSTREAM_REVISION`](UPSTREAM_REVISION)). This is a **development snapshot, not a security-supported release**. Avoid logging into sensitive websites until the fork has been updated to a security-patched release and tested.
 
 ## Recommended implementation — native Chromium DevTools
 
@@ -34,16 +36,18 @@ Prepare at least **100 GB disk free** and ideally 16 GB or more RAM. Official Ch
 ```bash
 git clone https://github.com/zaengit/browser.git
 cd browser
+python3 scripts/doctor.py --stage checkout --root "$HOME/chromium"
 bash scripts/bootstrap.sh "$HOME/chromium"
 bash scripts/build.sh "$HOME/chromium/src"
 ```
 
-`bootstrap.sh` installs Chromium's depot_tools checkout if needed, fetches upstream Chromium, runs dependency setup and hooks, applies this fork's native DevTools patch and records the upstream SHA in `$HOME/chromium/browser-upstream-sha.txt`.
+`bootstrap.sh` installs Chromium's depot_tools checkout if needed, fetches upstream Chromium, **switches to the exact pinned revision**, synchronizes the pinned dependencies, installs build prerequisites, applies the native DevTools patch, and records the SHA. It refuses to switch revisions if tracked source files have local modifications. Updating to current upstream `main` is **not** supported by this overlay until the source integration is revalidated.
 
 ### Option B — existing Chromium checkout
 
 ```bash
 cd /path/to/browser
+# The checkout MUST already be at the commit in UPSTREAM_REVISION.
 python3 scripts/enable_native_devtools.py /path/to/chromium/src --check
 python3 scripts/enable_native_devtools.py /path/to/chromium/src
 bash scripts/build.sh /path/to/chromium/src
@@ -55,7 +59,8 @@ The build target is `chrome_public_apk`, `target_os="android"`, `target_cpu="arm
 
 ```bash
 cd "$HOME/chromium/src"
-out/Browser/bin/chrome_public_apk install
+bash /path/to/browser/scripts/device_check.sh out/Browser/apks/ChromePublic.apk
+bash /path/to/browser/scripts/device_check.sh out/Browser/apks/ChromePublic.apk --install
 ```
 
 Open the built **Chromium** app on an ARM64 phone, visit an ordinary HTTPS page, and check the overflow menu for **DevTools** (possibly under **More tools**). Test the **Elements**, **Console**, **Network**, **Sources**, and **Application** panels separately. DevTools' phone-sized interface is experimental, so some controls may be inaccessible or render poorly until further UI adaptations are made.
@@ -88,6 +93,10 @@ It uses Chromium's local abstract Unix domain socket and its own lightweight ins
 
 ## Remaining work
 
-- Build the APK against a pinned Chromium revision and test on a physical ARM64 device.
+- **Compile** the APK against the pinned Chromium revision and run the complete smoke test on a physical ARM64 device. Source-only validation is not equivalent to a successful build.
 - Fix DevTools UI layout/touch usability on small Android screens where needed.
 - Optional: add a docked split-screen DevTools panel, custom naming/icons and release signing.
+
+## Device smoke-test checklist
+
+Use an **arm64-v8a** device, with USB debugging explicitly authorized for the host. Verify a normal HTTPS page loads; **DevTools** opens from the page menu; **Elements** shows DOM; **Console** runs a simple expression (`1 + 1`); **Network** records requests after reload; back navigation and reopening work; the browser remains functional after DevTools closes. Capture `adb logcat` for crashes. On smaller displays, note touch/scrolling or keyboard overlap problems.
