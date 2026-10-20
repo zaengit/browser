@@ -1,117 +1,93 @@
-# Browser — Chromium Android + On-Device DevTools
+# Browser — Chromium Android with Native On-Device DevTools
 
-A **Chromium Android fork overlay** that adds an on-device developer inspector to
-`chrome_public_apk`. This repository does **not** vendor Chromium's enormous source tree.
+Source overlay for a **fork of Chromium Android**, targeting ARM64 Android phones. Not WebView, Eruda, or a re-packaged Google Chrome APK. Chromium's source and binary dependencies are downloaded from upstream on the Linux build host, **not committed to this repository**.
 
-> Status: **MVP source integration; not yet built or tested on a device**.
-> This is a compact native CDP inspector, **not** the full desktop Chrome DevTools UI.
-> The inspector launches as a second app icon ("Browser DevTools") within the **same APK**.
-> Future iterations can integrate it into Chromium's overflow menu and dock it in a panel.
+> **Status: MVP source patch written, not yet compiled or tested on an Android phone.** No verified APK is available yet.
 
-## Architecture
+## Recommended implementation — native Chromium DevTools
 
-```
-Chromium Android (Blink / V8 / network)
-  └── existing DevToolsServer (same browser process)
-        └── abstract Unix socket: browserfork_devtools_remote
-              └── Java LocalSocket (same app UID)
-                    └── Browser DevTools Activity
-                          ├── Tabs: choose a page
-                          ├── Elements: DOM.getDocument
-                          ├── Console: Runtime.consoleAPICalled / Runtime.evaluate
-                          └── Network: Network.requestWillBeSent / responseReceived
-```
+Chromium 2026 already has the native DevTools frontend on Android (including `DevToolsActivity` and the menu action). However, the `AndroidDevToolsFrontend` feature is off by default for some Android configurations, and Chromium's Android menu currently limits the entry to tablets.
 
-No rooted Android device, PC connection, open TCP debugging port, externally hosted
-DevTools frontend, Eruda, or Android WebView is required **at runtime**.
+`scripts/enable_native_devtools.py` patches the existing **Chromium source itself**:
 
-## Linux build host
+1. Enables `kAndroidDevToolsFrontend` by default in `content/public/common/content_features.cc`.
+2. Removes the **tablet-only menu check** in `TabbedAppMenuPropertiesDelegate.java`, allowing a phone to display the menu.
+3. Adds DevTools to the **classic app menu**, where the upstream newer "More tools" menu already supports it.
+4. Preserves Chromium's native `DevToolsWindowAndroid.isDevToolsAllowedFor(...)` permission/policy check.
+5. Checks expected upstream symbols; refuses to patch an incompatible Chromium revision. Safe to run repeatedly.
 
-Chromium's own Android build prerequisites apply: **Linux x86-64**, substantial disk
-space (plan for 100GB+ free), RAM and a working Android toolchain. The 100GB relates
-to checkout/build artifacts, not the Android APK.
+**No new network socket, exported DevTools activity, or custom Chrome DevTools Protocol bridge is required.** The DevTools frontend comes from Chromium and opens in its own Android activity rather than a docked bottom panel.
 
-See: https://chromium.googlesource.com/chromium/src/+/main/docs/android_build_instructions.md
+Upstream source references:
 
-### 1. Checkout upstream Chromium
+- [Chromium DevTools feature](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/public/common/content_features.cc)
+- [Android browser menu](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/android/java/src/org/chromium/chrome/browser/tabbed_mode/TabbedAppMenuPropertiesDelegate.java)
+- [Native DevTools activity](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/android/java/src/org/chromium/chrome/browser/devtools/DevToolsActivity.java)
+- [DevTools GN configuration](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/browser/devtools/features.gni)
+
+## Build (Ubuntu / Linux x86-64)
+
+Prepare at least **100 GB disk free** and ideally 16 GB or more RAM. Official Chromium Android builds require Linux x86-64, not compiling on the Android handset. The 100 GB is for source, tools, dependencies and build artifacts, not APK size.
+
+### Option A — automated setup
 
 ```bash
-git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
-export PATH="$HOME/depot_tools:$PATH"
-mkdir -p "$HOME/chromium" && cd "$HOME/chromium"
-fetch --no-history --nohooks android
-cd src
-build/install-build-deps.sh
-gclient runhooks
+git clone https://github.com/zaengit/browser.git
+cd browser
+bash scripts/bootstrap.sh "$HOME/chromium"
+bash scripts/build.sh "$HOME/chromium/src"
 ```
 
-`fetch` does **not** fork Google's gigantic repository on GitHub. Keep the Chromium
-checkout locally and version only the overlay here.
+`bootstrap.sh` installs Chromium's depot_tools checkout if needed, fetches upstream Chromium, runs dependency setup and hooks, applies this fork's native DevTools patch and records the upstream SHA in `$HOME/chromium/browser-upstream-sha.txt`.
 
-### 2. Apply the Browser modifications
-
-With a checkout of **this** repository:
+### Option B — existing Chromium checkout
 
 ```bash
-python3 path/to/browser/scripts/apply_overlay.py "$HOME/chromium/src"
+cd /path/to/browser
+python3 scripts/enable_native_devtools.py /path/to/chromium/src --check
+python3 scripts/enable_native_devtools.py /path/to/chromium/src
+bash scripts/build.sh /path/to/chromium/src
 ```
 
-The patching script performs anchor checks and is idempotent. It:
-- installs `InspectorActivity.java` into Chromium's Java source tree;
-- adds it to `chrome/android/chrome_java_sources.gni`;
-- adds a launcher activity to `chrome/android/java/AndroidManifest.xml`;
-- gives the fork a distinct CDP abstract socket prefix to prevent collisions with Chrome.
+The build target is `chrome_public_apk`, `target_os="android"`, `target_cpu="arm64"`, release-style debugging settings (`is_debug=false`, `symbol_level=0`).
 
-### 3. Build ARM64 APK
+### Install and smoke test
 
 ```bash
-export PATH="$HOME/depot_tools:$PATH"
 cd "$HOME/chromium/src"
-gn gen out/Browser --args='target_os="android" target_cpu="arm64" is_debug=false symbol_level=0'
-autoninja -C out/Browser chrome_public_apk
 out/Browser/bin/chrome_public_apk install
 ```
 
-Open **Chromium**, navigate to an HTTPS page, then launch **Browser DevTools**
-from the Android app launcher. Select a `page` target. Make sure Chromium has
-finished initialization before opening DevTools.
+Open the built **Chromium** app on an ARM64 phone, visit an ordinary HTTPS page, and check the overflow menu for **DevTools** (possibly under **More tools**). Test the **Elements**, **Console**, **Network**, **Sources**, and **Application** panels separately. DevTools' phone-sized interface is experimental, so some controls may be inaccessible or render poorly until further UI adaptations are made.
 
-## MVP capabilities / limitations
+Do not assume the feature works until a clean Chromium build and device smoke test pass.
 
-| Feature | Code | Verified on device |
-|---|---|---|
-| Chromium fork build overlay | Yes | No |
-| Local Unix socket CDP (no TCP exposure) | Yes | No |
-| Enumerate and choose page targets | Yes | No |
-| Read document element tree | Yes | No |
-| Console events and JS evaluation | Yes | No |
-| Network request/response summaries | Yes | No |
-| Live CSS style editor | No | No |
-| Native element picker overlay | No | No |
-| Desktop DevTools frontend (Sources, Performance, Application) | No | No |
-| Docked panel / menu entry | No | No |
-| Release signing and Play Store packaging | No | No |
+## Tests
 
-Chrome changes its internal Android source layout frequently. If the overlay rejects
-an upstream file, inspect the mismatch and update the integration instead of blindly
-replacing source text. This repository has not been compiled against a pinned SHA.
+```bash
+python3 -m unittest discover -s tests -v
+```
 
-## Security
+These unit tests check anchor matching, safety on incompatible upstream code, phone menu changes, and idempotence. They are **not substitutes** for compiling and testing on a physical phone.
 
-The inspector uses Android's **abstract Unix socket**, the existing Chromium CDP
-authorization checks, and a **same-UID** in-app connection. It does **not** bind CDP
-to TCP localhost or Wi-Fi. Be aware CDP is high privilege: opening it gives debugging
-access to the selected page. Do not use the inspector with untrusted debugging
-extensions or expose it via port forward.
+## Earlier experimental inspector
 
-## Roadmap
+The repository also retains the older, experimental CDP inspector proof-of-concept:
 
-1. Pin a tested Chromium commit, compile and test on a physical ARM64 device.
-2. Add menu entry and tab-aware opening; only inspect the current foreground tab.
-3. Add a dockable layout and touch element picker using Chromium's content layer.
-4. Package a matching, offline DevTools frontend and transport it through an
-   authenticated in-process CDP bridge (not a public TCP debugging endpoint).
-5. Responsive developer UX, regression tests, release builds and update strategy.
+- `scripts/apply_overlay.py`
+- `overlay/InspectorActivity.java`
 
-Upstream: https://chromium.googlesource.com/chromium/src
-CDP reference: https://chromedevtools.github.io/devtools-protocol/
+It uses Chromium's local abstract Unix domain socket and its own lightweight inspector activity. **It is not part of the recommended native DevTools build path.** Don't apply both overlays to the same checkout unless you are intentionally testing and reviewing that combination. The earlier inspector has not been compiled or validated on a device either.
+
+## Security and maintenance
+
+- No public TCP debugging endpoint is added by the new native overlay.
+- The native policy and permission checks remain in place; enterprise restrictions are not bypassed.
+- Upstream Chromium changes quickly. Pin and record a tested SHA for releases, validate upstream source changes after every update, and do not present the fork as official Google Chrome.
+- Chromium and its third-party libraries retain their upstream license obligations.
+
+## Remaining work
+
+- Build the APK against a pinned Chromium revision and test on a physical ARM64 device.
+- Fix DevTools UI layout/touch usability on small Android screens where needed.
+- Optional: add a docked split-screen DevTools panel, custom naming/icons and release signing.
