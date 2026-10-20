@@ -48,14 +48,21 @@ def plan(root: Path) -> dict[Path, str]:
     gn_file = root / GN
     gn = gn_file.read_text()
     if JAVA_ENTRY.strip() not in gn:
-        anchor = '    "java/src/org/chromium/chrome/browser/DevToolsServer.java",'
-        gn = replace_once(gn, anchor, anchor + '\n' + JAVA_ENTRY, gn_file)
+        anchor = '"java/src/org/chromium/chrome/browser/DevToolsServer.java",'
+        lines = gn.splitlines(keepends=True)
+        matches = [i for i, line in enumerate(lines) if line.strip() == anchor]
+        if len(matches) != 1:
+            raise RuntimeError(f"Unexpected Chromium Java source list: {gn_file}")
+        index = matches[0]
+        indent = lines[index][:len(lines[index]) - len(lines[index].lstrip())]
+        lines.insert(index + 1, indent + JAVA_ENTRY.strip() + "\n")
+        gn = "".join(lines)
     changes[gn_file] = gn
 
     manifest_file = root / MANIFEST
     manifest = manifest_file.read_text()
     if MANIFEST_MARK not in manifest:
-        manifest = replace_once(manifest, "    </application>", ACTIVITY_XML + "    </application>", manifest_file)
+        manifest = replace_once(manifest, "</application>", ACTIVITY_XML + "</application>", manifest_file)
     changes[manifest_file] = manifest
 
     init_file = root / INITIALIZER
